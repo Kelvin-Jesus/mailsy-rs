@@ -25,7 +25,19 @@ disposable [Mail.tm](https://mail.tm/) inbox without leaving the terminal.
 
 ## Installation
 
-After a release is published, install it from crates.io:
+Install the prebuilt binary with Homebrew on macOS or Linux:
+
+```sh
+brew install Kelvin-Jesus/tap/mailghost
+```
+
+On Arch Linux, install the prebuilt AUR package with an AUR helper:
+
+```sh
+yay -S mailghost-bin
+```
+
+You can also install it from crates.io:
 
 ```sh
 cargo install mailghost --locked

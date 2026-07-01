@@ -1,0 +1,217 @@
+name: Publish packages
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing GitHub release tag to publish
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
+      AUR_SSH_PRIVATE_KEY:
+        required: true
+      AUR_KNOWN_HOSTS:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag to publish
+        required: true
+        type: string
+      publish:
+        description: Push tested metadata to Homebrew and AUR
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  RELEASE_TAG: ${{ inputs.tag }}
+
+jobs:
+  prepare:
+    name: Render package metadata
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate published release
+        shell: bash
+        run: |
+          test "$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)" = "false"
+          test "$(gh release view "${RELEASE_TAG}" --json isPrerelease --jq .isPrerelease)" = "false"
+      - name: Download release checksums
+        run: gh release download "${RELEASE_TAG}" --pattern SHA256SUMS --dir release
+      - name: Render package definitions
+        run: >
+          python3 packaging/render_packages.py
+          --tag "${RELEASE_TAG}"
+          --checksums release/SHA256SUMS
+          --output generated
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-definitions
+          path: generated
+          if-no-files-found: error
+
+  test-homebrew:
+    name: Test Homebrew (${{ matrix.platform }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-aarch64
+            runner: macos-15
+          - platform: macos-x86_64
+            runner: macos-15-intel
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@master
+      - uses: actions/download-artifact@v8
+        with:
+          name: package-definitions
+          path: generated
+      - name: Install formula in a temporary tap
+        shell: bash
+        run: |
+          brew tap-new Kelvin-Jesus/tap
+          cp generated/homebrew/Formula/mailghost.rb \
+            "$(brew --repository Kelvin-Jesus/tap)/Formula/mailghost.rb"
+          brew audit --strict --online Kelvin-Jesus/tap/mailghost
+          brew install Kelvin-Jesus/tap/mailghost
+          brew test Kelvin-Jesus/tap/mailghost
+          mailghost --version | grep -F "${RELEASE_TAG#v}"
+
+  test-aur:
+    name: Test AUR (${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    container: archlinux:base-devel
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-24.04
+
+    steps:
+      - name: Install packaging tools
+        run: pacman -Syu --noconfirm curl namcap
+      - uses: actions/download-artifact@v8
+        with:
+          name: package-definitions
+          path: generated
+      - name: Build package
+        working-directory: generated/aur
+        shell: bash
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder .
+          runuser -u builder -- makepkg --verifysource
+          runuser -u builder -- makepkg --cleanbuild --nodeps --noconfirm
+          namcap PKGBUILD
+          namcap ./*.pkg.tar.zst
+          runuser -u builder -- makepkg --printsrcinfo > .SRCINFO
+      - uses: actions/upload-artifact@v7
+        if: matrix.arch == 'x86_64'
+        with:
+          name: aur-metadata
+          path: |
+            generated/aur/PKGBUILD
+            generated/aur/.SRCINFO
+          include-hidden-files: true
+          if-no-files-found: error
+
+  publish-homebrew:
+    name: Update Homebrew tap
+    if: github.event_name == 'workflow_call' || inputs.publish
+    needs: test-homebrew
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: Kelvin-Jesus/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - uses: actions/download-artifact@v8
+        with:
+          name: package-definitions
+          path: generated
+      - name: Commit formula
+        shell: bash
+        run: |
+          current_version="$(
+            sed -n 's/^  version "\(.*\)"/\1/p' tap/Formula/mailghost.rb 2>/dev/null || true
+          )"
+          if test "${current_version}" = "${RELEASE_TAG#v}"; then
+            echo "Homebrew formula already publishes ${RELEASE_TAG}."
+            exit 0
+          fi
+          cp generated/homebrew/Formula/mailghost.rb tap/Formula/mailghost.rb
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap add Formula/mailghost.rb
+          git -C tap commit -m "mailghost ${RELEASE_TAG#v}"
+          git -C tap push
+
+  publish-aur:
+    name: Update AUR package
+    if: github.event_name == 'workflow_call' || inputs.publish
+    needs: test-aur
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: aur-metadata
+          path: generated
+      - name: Configure AUR SSH key
+        shell: bash
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_KNOWN_HOSTS: ${{ secrets.AUR_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 "${HOME}/.ssh"
+          printf '%s\n' "${AUR_SSH_PRIVATE_KEY}" > "${HOME}/.ssh/aur"
+          printf '%s\n' "${AUR_KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 600 "${HOME}/.ssh/aur" "${HOME}/.ssh/known_hosts"
+          cat >> "${HOME}/.ssh/config" <<'EOF'
+          Host aur.archlinux.org
+            User aur
+            IdentityFile ~/.ssh/aur
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          EOF
+          chmod 600 "${HOME}/.ssh/config"
+      - name: Commit package metadata
+        shell: bash
+        run: |
+          git -c init.defaultBranch=master clone \
+            ssh://aur@aur.archlinux.org/mailghost-bin.git aur
+          current_version="$(
+            sed -n 's/^pkgver=//p' aur/PKGBUILD 2>/dev/null || true
+          )"
+          if test "${current_version}" = "${RELEASE_TAG#v}"; then
+            echo "AUR package already publishes ${RELEASE_TAG}."
+            exit 0
+          fi
+          cp generated/PKGBUILD generated/.SRCINFO aur/
+          git -C aur config user.name "Kelvin Jesus"
+          git -C aur config user.email "kj.avelino.cambiaghi@gmail.com"
+          git -C aur add PKGBUILD .SRCINFO
+          git -C aur commit -m "Update to ${RELEASE_TAG#v}"
+          git -C aur push origin master

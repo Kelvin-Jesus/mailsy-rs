@@ -150,3 +150,12 @@ jobs:
               --verify-tag
           fi
           gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+
+  packages:
+    name: Publish package-manager metadata
+    if: vars.PACKAGE_PUBLISHING_ENABLED == 'true'
+    needs: publish
+    uses: ./.github/workflows/publish-packages.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

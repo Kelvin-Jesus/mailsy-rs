@@ -85,6 +85,9 @@ jobs:
       - name: Install formula in a temporary tap
         shell: bash
         run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
           brew tap-new Kelvin-Jesus/tap
           cp generated/homebrew/Formula/mailghost.rb \
             "$(brew --repository Kelvin-Jesus/tap)/Formula/mailghost.rb"
@@ -94,18 +97,10 @@ jobs:
           mailghost --version | grep -F "${RELEASE_TAG#v}"
 
   test-aur:
-    name: Test AUR (${{ matrix.arch }})
+    name: Test AUR (x86_64)
     needs: prepare
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     container: archlinux:base-devel
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
-          - arch: x86_64
-            runner: ubuntu-24.04
 
     steps:
       - name: Install packaging tools
@@ -126,7 +121,6 @@ jobs:
           namcap ./*.pkg.tar.zst
           runuser -u builder -- makepkg --printsrcinfo > .SRCINFO
       - uses: actions/upload-artifact@v7
-        if: matrix.arch == 'x86_64'
         with:
           name: aur-metadata
           path: |
@@ -134,6 +128,30 @@ jobs:
             generated/aur/.SRCINFO
           include-hidden-files: true
           if-no-files-found: error
+
+  test-aur-arm:
+    name: Test AUR artifact (aarch64)
+    needs: prepare
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: package-definitions
+          path: generated
+      - name: Verify and run ARM release archive
+        working-directory: generated/aur
+        shell: bash
+        run: |
+          source PKGBUILD
+          archive="${source_aarch64[0]%%::*}"
+          url="${source_aarch64[0]#*::}"
+          curl --fail --location --output "${archive}" "${url}"
+          echo "${sha256sums_aarch64[0]}  ${archive}" | sha256sum --check
+          mkdir package
+          tar -xzf "${archive}" -C package
+          file package/mailghost | grep -F "ARM aarch64"
+          package/mailghost --version | grep -F "${RELEASE_TAG#v}"
 
   publish-homebrew:
     name: Update Homebrew tap
@@ -171,7 +189,7 @@ jobs:
   publish-aur:
     name: Update AUR package
     if: github.event_name == 'workflow_call' || inputs.publish
-    needs: test-aur
+    needs: [test-aur, test-aur-arm]
     runs-on: ubuntu-24.04
 
     steps:

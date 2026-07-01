@@ -1,64 +1,70 @@
 # mailsy
 
-`mailsy` is a small command-line client for creating and reading a disposable
-email inbox from the terminal. It currently uses [Mail.tm](https://mail.tm/)
-through the `ephemeral_email` crate.
+[![CI](https://github.com/Kelvin-Jesus/mailsy-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Kelvin-Jesus/mailsy-rs/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/mailsy.svg)](https://crates.io/crates/mailsy)
+[![License](https://img.shields.io/crates/l/mailsy.svg)](LICENSE)
+
+`mailsy` creates and checks a disposable [Mail.tm](https://mail.tm/) inbox
+without leaving the terminal.
+
+> Disposable inboxes are public-facing, temporary infrastructure. Do not use
+> them for sensitive data, permanent accounts, or account recovery.
 
 ## Features
 
-- Create one disposable inbox.
-- Print the current email address and creation time.
-- List messages received by the inbox.
-- Open the HTML body of a selected message in the default application.
-- Delete the locally stored account.
+- Create and persist one disposable inbox.
+- Show its address and creation time.
+- List received messages and open a selected message.
+- Remove the locally stored inbox data.
 
 ## Installation
 
-Requires a current Rust toolchain.
+After a release is published, install it from crates.io:
 
 ```sh
-git clone git@github.com:Kelvin-Jesus/mailsy-rs.git
+cargo install mailsy --locked
+```
+
+Or install the current repository version:
+
+```sh
+cargo install --git https://github.com/Kelvin-Jesus/mailsy-rs
+```
+
+To build from a local checkout:
+
+```sh
+git clone https://github.com/Kelvin-Jesus/mailsy-rs.git
 cd mailsy-rs
-cargo install --path .
-```
-
-The `mailsy` binary is installed in Cargo's binary directory, normally
-`~/.cargo/bin`.
-
-To build without installing:
-
-```sh
 cargo build --release
-./target/release/mailsy --help
 ```
+
+The project requires Rust 1.85 or newer.
+
+### Prebuilt releases
+
+Version tags publish archives for:
+
+- macOS on Intel (`x86_64`) and Apple Silicon (`aarch64`)
+- Linux on `x86_64` and `aarch64`
+- Android on `x86_64` and `aarch64`
+
+Each GitHub release includes a `SHA256SUMS` file. The Android artifacts are
+command-line binaries for Termux or ADB, not APK applications. On Android,
+selected message bodies are printed in the terminal instead of being opened by
+a desktop application.
 
 ## Usage
 
-Create an inbox:
-
 ```sh
-mailsy g
+mailsy generate
+mailsy account
+mailsy messages
+mailsy delete
 ```
 
-Show the active account:
-
-```sh
-mailsy me
-```
-
-List received messages and optionally open one:
-
-```sh
-mailsy m
-```
-
-Delete the locally stored account:
-
-```sh
-mailsy d
-```
-
-Run `mailsy --help` to see all available commands.
+The original `g`, `me`, `m`, and `d` forms remain available as aliases. Run
+`mailsy --help` or `mailsy <command> --help` for command-line help.
 
 ## Local data
 
@@ -68,32 +74,31 @@ system's user configuration directory:
 - macOS: `~/Library/Application Support/mailsy/account.json`
 - Linux: `${XDG_CONFIG_HOME:-~/.config}/mailsy/account.json`
 
-When a message contains HTML, `mailsy m` writes it temporarily to
-`mailsy_email.html` in the system temporary directory before opening it.
+When you select a message, `mailsy messages` writes its text body to a
+temporary file and asks the operating system to open it.
 
-Deleting an account removes the local account file. Disposable inboxes and
-their availability are controlled by the upstream provider.
+`mailsy delete` removes local data only. Inbox availability and retention are
+controlled by Mail.tm.
 
 ## Development
 
 ```sh
 cargo fmt --check
-cargo check
-cargo test
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
 ```
 
-The project uses Rust 2021 and keeps `Cargo.lock` versioned so builds use the
-same dependency resolution.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 
 ## Limitations
 
 - Only one local account is supported at a time.
-- Mail.tm is currently the only provider.
-- The CLI displays message metadata and opens HTML bodies; it does not provide
-  a full terminal mail reader.
+- Mail.tm is the only provider.
+- The CLI is not a full terminal mail reader.
+- Provider-side inbox retention and domain availability can change.
 - Disposable email should not be used for sensitive, permanent, or
   account-recovery communication.
 
 ## License
 
-MIT
+[MIT](LICENSE)

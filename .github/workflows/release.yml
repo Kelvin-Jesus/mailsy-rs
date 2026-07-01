@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Verify release tag
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Match tag to Cargo package version
+        shell: bash
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.name == "mailsy") | .version')"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+
+  native:
+    name: Build ${{ matrix.artifact }}
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - artifact: macos-aarch64
+            runner: macos-15
+            target: aarch64-apple-darwin
+          - artifact: linux-x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - artifact: linux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --release --locked --bin mailsy --target "${{ matrix.target }}"
+      - name: Package release archive
+        shell: bash
+        run: |
+          archive="mailsy-${GITHUB_REF_NAME}-${{ matrix.artifact }}.tar.gz"
+          mkdir staging
+          cp "target/${{ matrix.target }}/release/mailsy" README.md LICENSE staging/
+          tar -czf "${archive}" -C staging mailsy README.md LICENSE
+          echo "ARCHIVE=${archive}" >> "${GITHUB_ENV}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+          retention-days: 7
+
+  android:
+    name: Build ${{ matrix.artifact }}
+    needs: verify
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: android-aarch64
+            abi: arm64-v8a
+            target: aarch64-linux-android
+          - artifact: android-x86_64
+            abi: x86_64
+            target: x86_64-linux-android
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: Build release binary with the Android NDK
+        run: >
+          cargo ndk
+          --target "${{ matrix.abi }}"
+          --platform 28
+          build --release --locked --bin mailsy
+      - name: Package release archive
+        shell: bash
+        run: |
+          archive="mailsy-${GITHUB_REF_NAME}-${{ matrix.artifact }}.tar.gz"
+          mkdir staging
+          cp "target/${{ matrix.target }}/release/mailsy" README.md LICENSE staging/
+          tar -czf "${archive}" -C staging mailsy README.md LICENSE
+          echo "ARCHIVE=${archive}" >> "${GITHUB_ENV}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: [native, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: mailsy-*
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum -- *.tar.gz > SHA256SUMS
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --generate-notes \
+              --title "mailsy ${GITHUB_REF_NAME}" \
+              --verify-tag
+          fi
+          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber

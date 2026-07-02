@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-01
+
+### Added
+
+- Added a branded, colored home screen for bare `mailghost` invocations.
+- Added adaptive terminal styling that respects redirected output and
+  `NO_COLOR`.
+
+### Changed
+
+- Bare invocation now exits successfully without accessing local account data
+  or the Mail.tm provider.
+
 ## [1.0.0] - 2026-07-01
 
 ### Added
@@ -28,5 +41,6 @@ All notable changes to this project are documented here. The format follows
   availability.
 - Set the minimum supported Rust version to 1.88.
 
-[Unreleased]: https://github.com/Kelvin-Jesus/mailghost/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Kelvin-Jesus/mailghost/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Kelvin-Jesus/mailghost/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Kelvin-Jesus/mailghost/releases/tag/v1.0.0

@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 #[command(name = "mailghost", version, about)]
 pub struct Cli {
     #[command(subcommand)]
-    pub(crate) command: Command,
+    pub(crate) command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -48,7 +48,7 @@ mod tests {
 
         for (alias, expected) in cases {
             let cli = Cli::try_parse_from(["mailghost", alias]).unwrap();
-            let actual = match cli.command {
+            let actual = match cli.command.expect("alias should parse as a command") {
                 Command::Generate => "generate",
                 Command::Messages => "messages",
                 Command::Delete => "delete",

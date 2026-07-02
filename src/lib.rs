@@ -3,6 +3,7 @@
 mod account;
 mod app;
 mod cli;
+mod home;
 
 pub use app::run;
 pub use cli::Cli;

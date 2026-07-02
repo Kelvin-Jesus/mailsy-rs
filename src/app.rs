@@ -9,11 +9,17 @@ use std::fs;
 
 use crate::account::{Account, AccountStore};
 use crate::cli::{Cli, Command};
+use crate::home;
 
 pub async fn run(cli: Cli) -> Result<()> {
+    let Some(command) = cli.command else {
+        home::write().context("could not write the Mailghost home screen")?;
+        return Ok(());
+    };
+
     let store = AccountStore::from_config_dir()?;
 
-    match cli.command {
+    match command {
         Command::Generate => generate(&store).await,
         Command::Messages => messages(&store).await,
         Command::Delete => delete(&store),
